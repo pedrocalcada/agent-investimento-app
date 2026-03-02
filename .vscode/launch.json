@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Agente Investimento",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}",
+      "buildFlags": ["-gcflags=all=-N"],
+      "showLog": false,
+      "substitutePath": [
+        { "from": "/mnt/c/Users/pedro/Dropbox/develop/agent-investimento-app", "to": "/home/calcped/pedro/Dropbox/develop/agent-investimento-app" },
+        { "from": "/home/calcped/pedro/Dropbox/develop/agent-investimento-app", "to": "/mnt/c/Users/pedro/Dropbox/develop/agent-investimento-app" }
+      ]
+    }
+  ]
+}

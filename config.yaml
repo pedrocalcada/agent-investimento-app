@@ -1,0 +1,6 @@
+# Copie para config.yaml e ajuste.
+# Variáveis de ambiente (LLM_API_URL, LLM_MODEL, PORT) têm precedência.
+
+LLM_API_URL: "http://localhost:11434/api/chat"  # endpoint da API do modelo
+LLM_MODEL: "deepseek-r1"
+PORT: 9001

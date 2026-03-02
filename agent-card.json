@@ -1,0 +1,19 @@
+{
+  "name": "Agente de Investimentos",
+  "description": "Agente responsável por operações simples em CDB e poupança.",
+  "url": "http://127.0.0.1:__PORT__/invoke",
+  "protocolVersion": "0.2",
+  "preferredTransport": "JSONRPC",
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "capabilities": {
+    "streaming": true
+  },
+  "skills": [
+    {
+      "id": "investimentos_basicos",
+      "name": "Operações simples em investimentos",
+      "description": "Consulta de saldo, depósitos e resgates em CDB ou poupança."
+    }
+  ]
+}
