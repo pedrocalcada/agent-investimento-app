@@ -1,6 +1,20 @@
 # Copie para config.yaml e ajuste.
-# Variáveis de ambiente (LLM_API_URL, LLM_MODEL, PORT) têm precedência.
+# Variáveis de ambiente (LLM_PROVIDER, OPENAI_API_KEY, LLM_API_URL, LLM_MODEL, PORT) têm precedência.
 
-LLM_API_URL: "http://localhost:11434/api/chat"  # endpoint da API do modelo
-LLM_MODEL: "deepseek-r1"
+# Escolha do provedor de LLM: "openai" ou "custom"
+LLM_PROVIDER: "openai"
+
+# Config para LLM_PROVIDER=openai (SDK oficial da OpenAI)
+
+OPENAI_BASE_URL: ""        # opcional: URL base customizada (ex.: proxy, Azure)
+OPENAI_MODEL: "gpt-4o"
+LLM_MODEL: "deepseek-r1"        # modelo de chat (gpt-4o, gpt-4o-mini, etc.)
+
+# Config para LLM_PROVIDER=custom (backend HTTP antigo)
+LLM_API_URL: "http://localhost:11434/api/chat"  # endpoint da API do modelo custom
+
+REDIS_ADDR: "localhost:6379"
+REDIS_PASSWORD: ""
+REDIS_DB: 0
+
 PORT: 9001

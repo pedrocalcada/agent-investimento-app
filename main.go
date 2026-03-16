@@ -15,6 +15,7 @@ import (
 
 	"agent-investimento/config"
 	"agent-investimento/llm"
+	"agent-investimento/redisstore"
 
 	"github.com/a2aproject/a2a-go/a2a"
 	"github.com/a2aproject/a2a-go/a2asrv"
@@ -24,9 +25,6 @@ import (
 // investmentExecutor implementa a lógica do agente de investimentos.
 // Ele segue o protocolo A2A e responde como "agente-investimento".
 type investmentExecutor struct {
-	llmAPIURL string
-	llmModel  string
-
 	mu       sync.Mutex
 	balances map[string]float64       // chave: "poupanca" ou "cdb"
 	sessions map[string][]llm.Message // histórico de conversa por ContextID
@@ -34,10 +32,8 @@ type investmentExecutor struct {
 
 var _ a2asrv.AgentExecutor = (*investmentExecutor)(nil)
 
-func newInvestmentExecutor(llmAPIURL, llmModel string) *investmentExecutor {
+func newInvestmentExecutor() *investmentExecutor {
 	return &investmentExecutor{
-		llmAPIURL: llmAPIURL,
-		llmModel:  llmModel,
 		balances: map[string]float64{
 			"poupanca": 100000,
 			"cdb":      100000,
@@ -50,32 +46,26 @@ func newInvestmentExecutor(llmAPIURL, llmModel string) *investmentExecutor {
 // Responde imediatamente com Task em estado Working (Final); processa e envia o resultado para o callback_url.
 func (e *investmentExecutor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue) error {
 	msg := reqCtx.Message
-	if msg == nil {
-		return nil
-	}
-
-	// Garante que sempre exista um ContextID para usarmos como chave de sessão.
-	if reqCtx.ContextID == "" {
-		reqCtx.ContextID = a2a.NewContextID()
-	}
 
 	callbackURL := getCallbackURLFromMessage(msg)
 
-	// Resposta imediata: Working + Final para o cliente tratar como aceito.
 	if err := e.writeStatusFinal(ctx, reqCtx, q, a2a.TaskStateWorking); err != nil {
 		return err
 	}
-	// Processamento assíncrono: retornamos agora para o servidor A2A enviar o Working
-	// ao orquestrador; em seguida processamos e enviamos o resultado ao callback.
+
 	ctxWork := context.WithoutCancel(ctx)
 	go func() {
+
 		text, state, err := e.computeResponse(ctxWork, reqCtx.ContextID, msg)
-		task := e.buildTaskFromResponse(reqCtx, text, state, err)
-		if callbackURL != "" {
-			postTaskToCallback(ctxWork, callbackURL, task)
-		} else {
-			log.Printf("aviso: callback_url vazio, resultado não enviado (context %s)", reqCtx.ContextID)
+		if err != nil {
+			log.Printf("falha ao computar resposta: %v", err)
+			text = err.Error()
+			state = a2a.TaskStateFailed
 		}
+		task := e.buildTaskFromResponse(reqCtx, text, state)
+
+		postTaskToCallback(ctxWork, callbackURL, task)
+
 	}()
 	return nil
 }
@@ -117,7 +107,7 @@ func (e *investmentExecutor) analyzeIntent(ctx context.Context, sessionID, userT
 	messages = append(messages, llm.Message{Role: "system", Content: investmentSystemPrompt})
 	messages = append(messages, history...)
 
-	content, err := llm.CallWithMessages(ctx, e.llmAPIURL, e.llmModel, messages)
+	content, err := llm.CallWithMessages(ctx, messages)
 	if err != nil {
 		return investmentIntent{}, err
 	}
@@ -156,7 +146,7 @@ func (e *investmentExecutor) askDisambiguationFromLLM(ctx context.Context, sessi
 	messages = append(messages, llm.Message{Role: "system", Content: disambiguationPrompt})
 	messages = append(messages, history...)
 
-	msg, err := llm.CallWithMessages(ctx, e.llmAPIURL, e.llmModel, messages)
+	msg, err := llm.CallWithMessages(ctx, messages)
 	if err != nil {
 		return "", err
 	}
@@ -175,7 +165,7 @@ func (e *investmentExecutor) responseSatisfiesIntent(ctx context.Context, sessio
 		Content: fmt.Sprintf("A resposta que o agente vai dar ao usuário é:\n\n\"%s\"\n\nConsiderando todo o histórico da conversa acima, essa resposta satisfaz completamente a intenção original do usuário? Responda SOMENTE com uma das palavras: satisfaz ou nao_satisfaz.", proposedResponse),
 	})
 
-	content, err := llm.CallWithMessages(ctx, e.llmAPIURL, e.llmModel, messages)
+	content, err := llm.CallWithMessages(ctx, messages)
 	if err != nil {
 		return false, err
 	}
@@ -309,52 +299,24 @@ func (e *investmentExecutor) computeResponse(ctx context.Context, sessionID stri
 }
 
 // buildTaskFromResponse monta o Task final para enviar ao callback (Completed, InputRequired ou Failed).
-func (e *investmentExecutor) buildTaskFromResponse(reqCtx *a2asrv.RequestContext, text string, state a2a.TaskState, err error) *a2a.Task {
-	if err != nil {
-		return buildFailedTaskFromReqCtx(reqCtx, err.Error())
+// Se reqCtx.StoredTask estiver preenchido (task recuperada do Redis), usa essa task como base em vez de criar uma nova.
+func (e *investmentExecutor) buildTaskFromResponse(reqCtx *a2asrv.RequestContext, text string, state a2a.TaskState) *a2a.Task {
+	cmd := redisstore.Client().Get(context.Background(), string(reqCtx.StoredTask.ID))
+	if err := cmd.Err(); err != nil {
+		log.Printf("falha ao recuperar task do Redis: %v", err)
+		return nil
 	}
-	taskID := reqCtx.TaskID
-	if taskID == "" {
-		taskID = a2a.NewTaskID()
+	var task a2a.Task
+	if err := json.Unmarshal([]byte(cmd.Val()), &task); err != nil {
+		log.Printf("falha ao deserializar task do Redis: %v", err)
+		return nil
 	}
-	contextID := reqCtx.ContextID
-	if contextID == "" {
-		contextID = a2a.NewContextID()
-	}
-	t := &a2a.Task{
-		ID:        taskID,
-		ContextID: contextID,
-		Status:    a2a.TaskStatus{State: state},
-		History:   []*a2a.Message{},
-	}
-	if reqCtx.Message != nil {
-		t.History = append(t.History, reqCtx.Message)
-	}
-	if state == a2a.TaskStateInputRequired {
-		t.Status.Message = a2a.NewMessageForTask(a2a.MessageRoleAgent, reqCtx, a2a.TextPart{Text: text})
-	} else {
-		t.History = append(t.History, a2a.NewMessageForTask(a2a.MessageRoleAgent, reqCtx, a2a.TextPart{Text: text}))
-	}
-	return t
-}
-
-func buildFailedTaskFromReqCtx(reqCtx *a2asrv.RequestContext, errText string) *a2a.Task {
-	taskID := reqCtx.TaskID
-	if taskID == "" {
-		taskID = a2a.NewTaskID()
-	}
-	return &a2a.Task{
-		ID:        taskID,
-		ContextID: reqCtx.ContextID,
-		Status:    a2a.TaskStatus{State: a2a.TaskStateFailed},
-		History:   []*a2a.Message{},
-	}
+	task.Status.State = state
+	task.History = append(task.History, a2a.NewMessageForTask(a2a.MessageRoleAgent, reqCtx, a2a.TextPart{Text: text}))
+	return &task
 }
 
 func getCallbackURLFromMessage(m *a2a.Message) string {
-	if m == nil || m.Metadata == nil {
-		return ""
-	}
 	s, _ := m.Metadata["callback_url"].(string)
 	return strings.TrimSpace(s)
 }
@@ -473,18 +435,21 @@ func main() {
 		port = *httpPort
 	}
 
-	exec := newInvestmentExecutor(
-		v.GetString("LLM_API_URL"),
-		v.GetString("LLM_MODEL"),
-	)
+	exec := newInvestmentExecutor()
+
+	var handlerOpts []a2asrv.RequestHandlerOption
+	redisstore.Init()
+	if rdb := redisstore.Client(); rdb != nil {
+		handlerOpts = append(handlerOpts, a2asrv.WithTaskStore(redisstore.NewStore(rdb)))
+		log.Printf("TaskStore: Redis em %s", config.RedisAddr())
+	}
 
 	agentCardPath := "agent-card.json"
 	if p := v.GetString("AGENT_CARD_PATH"); p != "" {
 		agentCardPath = p
 	}
 
-	// Handler A2A genérico usando nosso executor.
-	requestHandler := a2asrv.NewHandler(exec)
+	requestHandler := a2asrv.NewHandler(exec, handlerOpts...)
 	jsonrpcHandler := a2asrv.NewJSONRPCHandler(requestHandler)
 	mux := http.NewServeMux()
 	mux.Handle("/invoke", jsonrpcHandler)

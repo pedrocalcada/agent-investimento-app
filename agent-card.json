@@ -1,5 +1,5 @@
 {
-  "name": "Agente de Investimentos",
+  "name": "agente-investimentos",
   "description": "Agente responsável por operações simples em CDB e poupança.",
   "url": "http://127.0.0.1:__PORT__/invoke",
   "protocolVersion": "0.2",
@@ -12,8 +12,8 @@
   "skills": [
     {
       "id": "investimentos_basicos",
-      "name": "Operações simples em investimentos",
-      "description": "Consulta de saldo, depósitos e resgates em CDB ou poupança."
+      "name": "Operações de investimentos",
+      "description": "Aplicar ou resgatar investimentos como CDB, Poupança ou Tesouro Direto. Oferece informações sobre o saldo e rendimento dos investimentos. Colocar dinheiro na poupança ou no CDB."
     }
   ]
 }
